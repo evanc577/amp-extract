@@ -1,46 +1,29 @@
 extern crate byteorder;
 
 use byteorder::{BigEndian, ByteOrder};
+use std::convert::TryFrom;
 use std::env;
 use std::fs;
 
-const THRESHOLD: usize = 50 * (1 << 10); // 50 KiB
+const THRESHOLD: usize = 50 * (1 << 10);
 static MP3_BIT_RATES: [u32; 14] = [
-    32000,
-    40000,
-    48000,
-    56000,
-    64000,
-    80000,
-    96000,
-    112000,
-    128000,
-    160000,
-    192000,
-    224000,
-    256000,
-    320000,
+    32000, 40000, 48000, 56000, 64000, 80000, 96000, 112000, 128000, 160000, 192000, 224000,
+    256000, 320000,
 ];
 static MP3_SAMPLE_RATES: [u32; 3] = [44100, 48000, 3200];
 
-fn get_bit_rate(i: u32) -> Option<u32> {
+fn get_bit_rate(i: u32) -> Option<&'static u32> {
     let min = 0b0001;
-    let max = 0b1110;
-
-    if i < min || i > max {
-        return None;
-    }
-    Some(MP3_BIT_RATES[(i-min) as usize])
+    let i = i.checked_sub(min)?;
+    let i = usize::try_from(i).ok()?;
+    MP3_BIT_RATES.get(i)
 }
 
-fn get_sample_rate(i: u32) -> Option<u32> {
+fn get_sample_rate(i: u32) -> Option<&'static u32> {
     let min = 0b00;
-    let max = 0b10;
-
-    if i < min || i > max {
-        return None;
-    }
-    Some(MP3_SAMPLE_RATES[(i-min) as usize])
+    let i = i.checked_sub(min)?;
+    let i = usize::try_from(i).ok()?;
+    MP3_SAMPLE_RATES.get(i)
 }
 
 struct MyVec<'a> {
@@ -63,7 +46,7 @@ impl<'a> MyVec<'a> {
     }
 
     fn len(&self) -> usize {
-        self.arr.len() - self.idx
+        self.arr.len().checked_sub(self.idx).unwrap_or(0)
     }
 }
 
