@@ -4,13 +4,10 @@ extern crate byteorder;
 
 use byteorder::{BigEndian, ByteOrder};
 use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::convert::TryInto;
 use std::env;
 use std::fs;
-use std::iter::FromIterator;
 
-const THRESHOLD: usize = 50 * (1<<10);
+const THRESHOLD: usize = 50 * (1 << 10);
 lazy_static! {
     static ref MP3_BIT_RATES: HashMap<u32, u32> = [
         (0b0001, 32000),
@@ -29,16 +26,37 @@ lazy_static! {
         (0b1110, 320000),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect();
-    static ref MP3_SAMPLE_RATES: HashMap<u32, u32> = [
-        (0b00, 44100),
-        (0b01, 48000),
-        (0b10, 3200),
-    ]
-    .iter()
-    .cloned()
-    .collect();
+
+    static ref MP3_SAMPLE_RATES: HashMap<u32, u32> = [(0b00, 44100), (0b01, 48000), (0b10, 3200),]
+        .iter()
+        .copied()
+        .collect();
+}
+
+struct MyVec<'a> {
+    arr: &'a Vec<u8>,
+    idx: usize,
+}
+
+impl<'a> MyVec<'a> {
+    fn new(arr: &'a Vec<u8>) -> MyVec {
+        MyVec { arr, idx: 0 }
+    }
+
+    fn read(&mut self, i: usize) -> &'a [u8] {
+        if self.idx + i >= self.arr.len() {
+            return &[];
+        }
+        let tmp = self.idx;
+        self.idx += i;
+        &self.arr[tmp..self.idx]
+    }
+
+    fn len(&self) -> usize {
+        self.arr.len() - self.idx
+    }
 }
 
 fn main() {
@@ -63,17 +81,17 @@ fn process_file(file: &String) {
     extracted.sort_by(|a, b| a.1.cmp(&b.1));
 
     // write mp3s to file
-    for (i,mp3) in extracted.iter().enumerate() {
-        let outfile = format!("{}.{}.mp3", file, i+1);
+    for (i, mp3) in extracted.iter().enumerate() {
+        let outfile = format!("{}.{}.mp3", file, i + 1);
         println!("writing {}", outfile);
         fs::write(outfile, &mp3.0[..]).unwrap();
     }
 }
 
 fn deobfs(buffer: &mut Vec<u8>, offset: usize) {
-    for i in 0..buffer.len()-1 {
-        if i%4 == offset {
-            buffer.swap(i, i+1);
+    for i in 0..buffer.len() - 1 {
+        if i % 4 == offset {
+            buffer.swap(i, i + 1);
         }
     }
 }
@@ -81,12 +99,12 @@ fn deobfs(buffer: &mut Vec<u8>, offset: usize) {
 fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
     // extract all mp3s found in data stream
     // adapted from https://gist.github.com/RavuAlHemio/9376cf495c82be9c8778
-    let mut stream = VecDeque::from_iter(s.clone());
+    let mut stream = MyVec::new(&s);
     let total_stream_len: usize = stream.len();
-    let tmp: VecDeque<u8> = stream.drain(..3).collect();
 
     let mut header: Vec<u8> = vec![0];
-    header.extend(tmp);
+    header.extend(stream.read(3));
+
     let mut mp3_stream: Vec<u8> = Vec::new();
     let mut is_mp3 = false;
 
@@ -106,10 +124,11 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
 
         // read header_num
         header.remove(0);
-        header.push(match stream.pop_front() {
-            Some(val) => val,
-            None => break,
-        });
+        let x = stream.read(1);
+        if x.len() == 0 {
+            break;
+        }
+        header.push(x[0]);
         let header_num = BigEndian::read_u32(&header[..]);
 
         // frame sync
@@ -162,18 +181,17 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
         is_mp3 = true;
 
         // calculate frame length
-        let frame_length = 144 * bit_rate / sample_rate
+        let frame_length = (144 * bit_rate / sample_rate
             + match has_padding {
                 true => 1,
                 false => 0,
-            };
+            }) as usize;
 
         // append frame
-        let frame_length: usize = frame_length.try_into().unwrap();
         if stream.len() < frame_length {
             break;
         }
-        let frame_data: Vec<_> = stream.drain(..frame_length-4).collect();
+        let frame_data: Vec<_> = stream.read(frame_length - 4).to_vec();
         mp3_stream.extend(header.clone());
         mp3_stream.extend(frame_data);
 
@@ -181,10 +199,9 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
         if stream.len() < 3 {
             break;
         }
-        let tmp: VecDeque<u8> = stream.drain(..3).collect();
         header.clear();
         header.push(0);
-        header.extend(&tmp);
+        header.extend(stream.read(3));
     }
 
     extracted_mp3s
