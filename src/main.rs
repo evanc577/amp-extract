@@ -1,38 +1,46 @@
-#[macro_use]
-extern crate lazy_static;
 extern crate byteorder;
 
 use byteorder::{BigEndian, ByteOrder};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-const THRESHOLD: usize = 50 * (1 << 10);
-lazy_static! {
-    static ref MP3_BIT_RATES: HashMap<u32, u32> = [
-        (0b0001, 32000),
-        (0b0010, 40000),
-        (0b0011, 48000),
-        (0b0100, 56000),
-        (0b0101, 64000),
-        (0b0110, 80000),
-        (0b0111, 96000),
-        (0b1000, 112000),
-        (0b1001, 128000),
-        (0b1010, 160000),
-        (0b1011, 192000),
-        (0b1100, 224000),
-        (0b1101, 256000),
-        (0b1110, 320000),
-    ]
-    .iter()
-    .copied()
-    .collect();
+const THRESHOLD: usize = 50 * (1 << 10); // 50 KiB
+static MP3_BIT_RATES: [u32; 14] = [
+    32000,
+    40000,
+    48000,
+    56000,
+    64000,
+    80000,
+    96000,
+    112000,
+    128000,
+    160000,
+    192000,
+    224000,
+    256000,
+    320000,
+];
+static MP3_SAMPLE_RATES: [u32; 3] = [44100, 48000, 3200];
 
-    static ref MP3_SAMPLE_RATES: HashMap<u32, u32> = [(0b00, 44100), (0b01, 48000), (0b10, 3200),]
-        .iter()
-        .copied()
-        .collect();
+fn get_bit_rate(i: u32) -> Option<u32> {
+    let min = 0b0001;
+    let max = 0b1110;
+
+    if i < min || i > max {
+        return None;
+    }
+    Some(MP3_BIT_RATES[(i-min) as usize])
+}
+
+fn get_sample_rate(i: u32) -> Option<u32> {
+    let min = 0b00;
+    let max = 0b10;
+
+    if i < min || i > max {
+        return None;
+    }
+    Some(MP3_SAMPLE_RATES[(i-min) as usize])
 }
 
 struct MyVec<'a> {
@@ -153,7 +161,7 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
         if bit_rate_idx == 0b0000 || bit_rate_idx == 0b1111 {
             continue;
         }
-        let bit_rate = match MP3_BIT_RATES.get(&bit_rate_idx) {
+        let bit_rate = match get_bit_rate(bit_rate_idx) {
             Some(val) => val,
             None => continue,
         };
@@ -163,7 +171,7 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
         if sample_rate_idx == 0b11 {
             continue;
         }
-        let sample_rate = match MP3_SAMPLE_RATES.get(&sample_rate_idx) {
+        let sample_rate = match get_sample_rate(sample_rate_idx) {
             Some(val) => val,
             None => continue,
         };
