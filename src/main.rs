@@ -1,13 +1,9 @@
-extern crate byteorder;
-
-use byteorder::{BigEndian, ByteOrder};
 use std::convert::TryFrom;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
 
-
-const THRESHOLD: usize = 50 * (1 << 10);
+const THRESHOLD: usize = 50 * (1 << 10);  // 50 KiB
 static MP3_BIT_RATES: [u32; 14] = [
     32000, 40000, 48000, 56000, 64000, 80000, 96000, 112000, 128000, 160000, 192000, 224000,
     256000, 320000,
@@ -28,30 +24,6 @@ fn get_sample_rate(i: u32) -> Option<&'static u32> {
     MP3_SAMPLE_RATES.get(i)
 }
 
-struct MyVec<'a> {
-    arr: &'a Vec<u8>,
-    idx: usize,
-}
-
-impl<'a> MyVec<'a> {
-    fn new(arr: &'a Vec<u8>) -> MyVec {
-        MyVec { arr, idx: 0 }
-    }
-
-    fn read(&mut self, i: usize) -> &'a [u8] {
-        if self.idx + i >= self.arr.len() {
-            return &[];
-        }
-        let tmp = self.idx;
-        self.idx += i;
-        &self.arr[tmp..self.idx]
-    }
-
-    fn len(&self) -> usize {
-        self.arr.len().checked_sub(self.idx).unwrap_or(0)
-    }
-}
-
 fn main() {
     let args = env::args_os().collect::<Vec<_>>();
 
@@ -67,7 +39,7 @@ fn process_file(file: &OsString) {
         Err(err) => {
             eprintln!("Error opening {:?}: {}", file, err);
             return;
-        },
+        }
     };
     let mut extracted: Vec<(Vec<u8>, usize)> = Vec::new();
     for i in 0..4 {
@@ -100,22 +72,27 @@ fn deobfs(buffer: &mut Vec<u8>, offset: usize) {
 fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
     // extract all mp3s found in data stream
     // adapted from https://gist.github.com/RavuAlHemio/9376cf495c82be9c8778
-    let mut stream = MyVec::new(&s);
-    let total_stream_len: usize = stream.len();
-
-    let mut header: Vec<u8> = vec![0];
-    header.extend(stream.read(3));
-
-    let mut mp3_stream: Vec<u8> = Vec::new();
-    let mut is_mp3 = false;
+    let stream_iter = &mut s.iter();
+    let total_stream_len: usize = stream_iter.len();
 
     // return value
     let mut extracted_mp3s: Vec<(Vec<u8>, usize)> = Vec::new();
 
+    let mut header: Vec<u8> = vec![0];
+    let data = stream_iter.take(3);
+    if data.len() < 3 {
+        return extracted_mp3s;
+    }
+    header.extend(data);
+
+    let mut mp3_stream: Vec<u8> = Vec::new();
+    mp3_stream.reserve(total_stream_len);
+    let mut is_mp3 = false;
+
     loop {
         if !is_mp3 {
             if mp3_stream.len() > THRESHOLD {
-                let offset: usize = total_stream_len - stream.len() - mp3_stream.len();
+                let offset: usize = total_stream_len - stream_iter.len() - mp3_stream.len();
                 extracted_mp3s.push((mp3_stream.clone(), offset));
             }
             mp3_stream.clear();
@@ -125,12 +102,15 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
 
         // read header_num
         header.remove(0);
-        let x = stream.read(1);
-        if x.len() == 0 {
-            break;
-        }
-        header.push(x[0]);
-        let header_num = BigEndian::read_u32(&header[..]);
+        let x = *match stream_iter.next() {
+            Some(v) => v,
+            None => break,
+        };
+        header.push(x);
+        let header_num = u32::from(header[0]) << 24
+            | u32::from(header[1]) << 16
+            | u32::from(header[2]) << 8
+            | u32::from(header[3]);
 
         // frame sync
         if header_num & 0xFFE00000 != 0xFFE00000 {
@@ -189,20 +169,21 @@ fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
             }) as usize;
 
         // append frame
-        if stream.len() < frame_length {
+        let frame_data = stream_iter.take(frame_length - 4);
+        if frame_data.len() < frame_length - 4 {
             break;
         }
-        let frame_data: Vec<_> = stream.read(frame_length - 4).to_vec();
         mp3_stream.extend(header.clone());
         mp3_stream.extend(frame_data);
 
         // prepare for next scan-read
-        if stream.len() < 3 {
-            break;
-        }
         header.clear();
         header.push(0);
-        header.extend(stream.read(3));
+        let data = stream_iter.take(3);
+        if data.len() < 3 {
+            break;
+        }
+        header.extend(data);
     }
 
     extracted_mp3s
