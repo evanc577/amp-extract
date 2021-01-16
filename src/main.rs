@@ -3,7 +3,9 @@ extern crate byteorder;
 use byteorder::{BigEndian, ByteOrder};
 use std::convert::TryFrom;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
+
 
 const THRESHOLD: usize = 50 * (1 << 10);
 static MP3_BIT_RATES: [u32; 14] = [
@@ -51,16 +53,22 @@ impl<'a> MyVec<'a> {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args = env::args_os().collect::<Vec<_>>();
 
     for file in &args[1..] {
         process_file(file);
     }
 }
 
-fn process_file(file: &String) {
+fn process_file(file: &OsString) {
     // deobfuscate files and extract mp3s
-    let buffer: Vec<u8> = fs::read(file).unwrap();
+    let buffer: Vec<u8> = match fs::read(file) {
+        Ok(val) => val,
+        Err(err) => {
+            eprintln!("Error opening {:?}: {}", file, err);
+            return;
+        },
+    };
     let mut extracted: Vec<(Vec<u8>, usize)> = Vec::new();
     for i in 0..4 {
         let mut tmp_buffer = buffer.clone();
@@ -73,8 +81,10 @@ fn process_file(file: &String) {
 
     // write mp3s to file
     for (i, mp3) in extracted.iter().enumerate() {
-        let outfile = format!("{}.{}.mp3", file, i + 1);
-        println!("writing {}", outfile);
+        let suffix = format!(".{}.mp3", i + 1);
+        let mut outfile = file.clone();
+        outfile.push(suffix);
+        println!("writing {:?}", outfile);
         fs::write(outfile, &mp3.0[..]).unwrap();
     }
 }
