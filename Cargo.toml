@@ -6,3 +6,6 @@ edition = "2018"
 
 [profile.release]
 lto = true
+
+[dependencies]
+rayon = "1.5"

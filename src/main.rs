@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::convert::TryFrom;
 use std::env;
 use std::ffi::OsString;
@@ -26,10 +27,7 @@ fn get_sample_rate(i: u32) -> Option<&'static u32> {
 
 fn main() {
     let args = env::args_os().collect::<Vec<_>>();
-
-    for file in &args[1..] {
-        process_file(file);
-    }
+    args[1..].par_iter().for_each(|f| process_file(f));
 }
 
 fn process_file(file: &OsString) {
