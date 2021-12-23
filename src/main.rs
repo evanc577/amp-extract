@@ -1,70 +1,77 @@
+use itertools::Itertools;
 use rayon::prelude::*;
 use std::convert::TryFrom;
-use std::env;
-use std::ffi::OsString;
-use std::fs;
+use std::path::Path;
+use std::{env, fs};
 
-const THRESHOLD: usize = 50 * (1 << 10);  // 50 KiB
+const THRESHOLD: usize = 50 * (1 << 10); // 50 KiB
 static MP3_BIT_RATES: [u32; 14] = [
     32000, 40000, 48000, 56000, 64000, 80000, 96000, 112000, 128000, 160000, 192000, 224000,
     256000, 320000,
 ];
 static MP3_SAMPLE_RATES: [u32; 3] = [44100, 48000, 3200];
 
-fn get_bit_rate(i: u32) -> Option<&'static u32> {
+fn get_bit_rate(i: u32) -> Option<u32> {
     let min = 0b0001;
     let i = i.checked_sub(min)?;
     let i = usize::try_from(i).ok()?;
-    MP3_BIT_RATES.get(i)
+    MP3_BIT_RATES.get(i).copied()
 }
 
-fn get_sample_rate(i: u32) -> Option<&'static u32> {
+fn get_sample_rate(i: u32) -> Option<u32> {
     let min = 0b00;
     let i = i.checked_sub(min)?;
     let i = usize::try_from(i).ok()?;
-    MP3_SAMPLE_RATES.get(i)
+    MP3_SAMPLE_RATES.get(i).copied()
 }
 
 fn main() {
-    let args = env::args_os().collect::<Vec<_>>();
-    args[1..].par_iter().for_each(|f| process_file(f));
+    let args: Vec<_> = env::args_os().skip(1).collect();
+    args.par_iter().for_each(process_file);
 }
 
-fn process_file(file: &OsString) {
+fn process_file(path: impl AsRef<Path>) {
+    if !path.as_ref().is_file() {
+        eprintln!("Not a file: {:?}", &path.as_ref());
+        return;
+    }
+
     // deobfuscate files and extract mp3s
-    let buffer: Vec<u8> = match fs::read(file) {
+    let buffer: Vec<u8> = match fs::read(&path) {
         Ok(val) => val,
         Err(err) => {
-            eprintln!("Error opening {:?}: {}", file, err);
+            eprintln!("Error opening {:?}: {}", &path.as_ref(), err);
             return;
         }
     };
-    let mut extracted: Vec<(Vec<u8>, usize)> = Vec::new();
-    for i in 0..4 {
-        let mut tmp_buffer = buffer.clone();
-        deobfs(&mut tmp_buffer, i);
-        extracted.extend(extract_mp3(tmp_buffer));
-    }
 
-    // sort extracted mp3s by the order they appear in
-    extracted.sort_by(|a, b| a.1.cmp(&b.1));
+    let extracted = (0..4)
+        .map(|i| extract_mp3(deobfs(&buffer, i)))
+        .flatten()
+        // sort extracted mp3s by the order they appear in
+        .sorted_unstable_by_key(|x| x.1);
 
     // write mp3s to file
-    for (i, mp3) in extracted.iter().enumerate() {
-        let suffix = format!(".{}.mp3", i + 1);
-        let mut outfile = file.clone();
-        outfile.push(suffix);
-        println!("writing {:?}", outfile);
-        fs::write(outfile, &mp3.0[..]).unwrap();
+    for (i, mp3) in extracted.enumerate() {
+        let path_out = {
+            let mut filename_out = path.as_ref().file_name().to_owned().unwrap().to_owned();
+            filename_out.push(format!(".{}.mp3", i + 1));
+            path.as_ref().with_file_name(filename_out)
+        };
+
+        println!("writing {}", &path_out.to_string_lossy());
+        fs::write(path_out, &mp3.0).unwrap();
     }
 }
 
-fn deobfs(buffer: &mut Vec<u8>, offset: usize) {
-    for i in 0..buffer.len() - 1 {
+fn deobfs(buffer: &[u8], offset: usize) -> Vec<u8> {
+    let mut out: Vec<_> = buffer.iter().copied().collect();
+    for i in 0..out.len() - 1 {
         if i % 4 == offset {
-            buffer.swap(i, i + 1);
+            out.swap(i, i + 1);
         }
     }
+    out
 }
 
 fn extract_mp3(s: Vec<u8>) -> Vec<(Vec<u8>, usize)> {
